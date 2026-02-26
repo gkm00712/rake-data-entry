@@ -5,7 +5,7 @@ import re
 
 # --- CONFIGURATION ---
 # Your specific Live Google Apps Script Web App URL
-GOOGLE_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzIWIysLhf_RPL1o5-NgqwIIM_OgA_hLey2WoschBClY5zku8fDtNLTjcYPkxn6-PJY/exec"
+GOOGLE_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwN3-BGw9XJPHCcXbO6QbXH9alAXGVYvjdbCu0tA3zfUq5TOrdvlo-9P5Y1Np-t0keQ/exec"
 
 # --- MAIN APP UI ---
 st.set_page_config(page_title="Rake Data Entry", layout="wide")
