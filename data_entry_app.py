@@ -1,31 +1,16 @@
 import streamlit as st
-import pandas as pd
+import requests
 from datetime import datetime
-import os
 import re
 
 # --- CONFIGURATION ---
-EXCEL_FILE = "Rake_Master_Database.xlsx"
-
-# --- INITIALIZE EXCEL FILE ---
-def init_excel():
-    """Creates the master Excel file with Optimizer-ready columns if it doesn't exist."""
-    if not os.path.exists(EXCEL_FILE):
-        columns = [
-            "RAKE No", "Coal Source", "Wagon Type", "Receipt Time", 
-            "Placement Time", "Unloading End Time", "Release Time",
-            "Unloading Duration", "Release Duration", "Demurrage (Hrs)", 
-            "WT-1", "WT-2", "WT-3", "WT-4", "GCV", "VM", "REMARKS"
-        ]
-        df = pd.DataFrame(columns=columns)
-        df.to_excel(EXCEL_FILE, index=False, engine='openpyxl')
-
-init_excel()
+# Your specific Live Google Apps Script Web App URL
+GOOGLE_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzIWIysLhf_RPL1o5-NgqwIIM_OgA_hLey2WoschBClY5zku8fDtNLTjcYPkxn6-PJY/exec"
 
 # --- MAIN APP UI ---
 st.set_page_config(page_title="Rake Data Entry", layout="wide")
-st.title("📝 Strict Rake Data Entry (Optimizer Ready)")
-st.markdown("All data entered here is strictly validated and saved to a local Excel file for your Optimization Dashboard.")
+st.title("📝 Cloud Rake Data Entry (Direct to Google Sheets)")
+st.markdown("All data entered here is strictly validated and saved instantly to your cloud Google Sheet.")
 
 with st.form("entry_form", clear_on_submit=False):
     col1, col2, col3 = st.columns(3)
@@ -55,14 +40,14 @@ with st.form("entry_form", clear_on_submit=False):
     
     remarks = st.text_area("REMARKS (Delays, Breakdowns, etc.)")
     
-    # --- STRICT VALIDATION & SAVE LOGIC ---
-    submit_btn = st.form_submit_button("Validate & Save for Optimizer")
+    # --- STRICT VALIDATION & CLOUD SAVE LOGIC ---
+    submit_btn = st.form_submit_button("Validate & Send to Google Sheets")
     
     if submit_btn:
-        # Rule 1: Validate Rake Number Format using Regex
+        # Rule 1: Validate Rake Number Format
         if not re.match(r"^\d+/\d+$", rake_no):
             st.error("❌ Invalid Rake Number! It must be numbers separated by a slash (e.g., 1/1481).")
-            st.stop() # Stops the script from saving
+            st.stop() 
             
         # Rule 2: Chronological Time Checks
         if placement < receipt:
@@ -75,46 +60,40 @@ with st.form("entry_form", clear_on_submit=False):
             st.error("❌ Time Error: Release Time cannot be before Unloading End Time.")
             st.stop()
 
-        # Rule 3: Auto-Calculate Durations for the Optimizer
+        # Rule 3: Auto-Calculate Durations
         unloading_duration = str(unloading_end - placement)
         release_duration = str(release - receipt)
 
-        # Rule 4: Package Data exactly as the Optimizer expects
-        new_data = pd.DataFrame([{
-            "RAKE No": rake_no,
-            "Coal Source": source,
-            "Wagon Type": wagon_type,
-            "Receipt Time": receipt.strftime("%d.%m.%Y/%H:%M"),
-            "Placement Time": placement.strftime("%d.%m.%Y/%H:%M"),
-            "Unloading End Time": unloading_end.strftime("%d.%m.%Y/%H:%M"),
-            "Release Time": release.strftime("%d.%m.%Y/%H:%M"),
-            "Unloading Duration": unloading_duration,
-            "Release Duration": release_duration,
-            "Demurrage (Hrs)": demurrage,
-            "WT-1": int(wt1_val),
-            "WT-2": int(wt2_val),
-            "WT-3": int(wt3_val),
-            "WT-4": int(wt4_val),
-            "GCV": int(gcv),
-            "VM": float(vm),
-            "REMARKS": remarks.replace('\n', ' | ') # Remove newlines so they don't break Excel parsing
-        }])
+        # Rule 4: Package Data into JSON format for Google Sheets
+        payload = {
+            "rake_no": rake_no,
+            "source": source,
+            "wagon_type": wagon_type,
+            "receipt": receipt.strftime("%d.%m.%Y/%H:%M"),
+            "placement": placement.strftime("%d.%m.%Y/%H:%M"),
+            "unloading_end": unloading_end.strftime("%d.%m.%Y/%H:%M"),
+            "release": release.strftime("%d.%m.%Y/%H:%M"),
+            "unloading_duration": unloading_duration,
+            "release_duration": release_duration,
+            "demurrage": demurrage,
+            "wt1": int(wt1_val),
+            "wt2": int(wt2_val),
+            "wt3": int(wt3_val),
+            "wt4": int(wt4_val),
+            "gcv": int(gcv),
+            "vm": float(vm),
+            "remarks": remarks.replace('\n', ' | ') # Remove newlines
+        }
         
-        # Save to Local Excel File
-        try:
-            existing_df = pd.read_excel(EXCEL_FILE, engine='openpyxl')
-            updated_df = pd.concat([existing_df, new_data], ignore_index=True)
-            updated_df.to_excel(EXCEL_FILE, index=False, engine='openpyxl')
-            
-            st.success(f"✅ Strict Validation Passed! Rake {rake_no} added to {EXCEL_FILE}.")
-        except PermissionError:
-            st.error(f"❌ Cannot save data! Please close '{EXCEL_FILE}' if you have it open in Excel.")
-
-# --- VIEW RECENT ENTRIES ---
-st.divider()
-st.subheader("📊 Recent Excel Entries")
-try:
-    display_df = pd.read_excel(EXCEL_FILE, engine='openpyxl')
-    st.dataframe(display_df.tail(5), use_container_width=True)
-except Exception as e:
-    st.info("No data yet. Submit a form to create the first entry!")
+        # Send to Google Sheets via POST request
+        with st.spinner('Saving securely to Google Sheets...'):
+            try:
+                response = requests.post(GOOGLE_WEB_APP_URL, json=payload)
+                
+                if response.status_code == 200:
+                    st.success(f"✅ Strict Validation Passed! Rake {rake_no} added to Google Sheets.")
+                    st.balloons()
+                else:
+                    st.error(f"❌ Failed to reach Google Sheets. Error code: {response.status_code}")
+            except requests.exceptions.RequestException as e:
+                st.error(f"❌ Connection error: {e}")
