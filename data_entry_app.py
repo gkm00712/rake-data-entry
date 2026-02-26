@@ -6,7 +6,7 @@ import pytz
 import re
 
 # PASTE YOUR NEW GOOGLE APPS SCRIPT URL HERE
-URL = "https://script.google.com/macros/s/YOUR_URL_HERE/exec"
+URL = "https://script.google.com/macros/s/AKfycbyFnT0UCZGcJ8JscKTa-7RtwyWr1UuzRz4hsoxD9Ov3drajglBEITnE7fT5O8n5TdB2/exec"
 IST = pytz.timezone('Asia/Kolkata')
 
 st.set_page_config(page_title="Rake Entry System", layout="wide")
