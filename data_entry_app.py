@@ -8,7 +8,7 @@ import io
 import math
 
 # --- CONFIGURATION ---
-APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyWmANSD06mgC05nEi4SZkdN4pxZp4V_c3TTWK0OsqM0mnWVAq7lqDJsnSSBaegt07r/exec"
+APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx6CM0dhRGBpB0C_TxkohVceQ61MxgFoGasy65As5KIqByHG7tES-gAx0deLdbpugNq/exec"
 LIVE_EXCEL_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ6PaPvxvRG_cUNa9NKfYEnujEShvxjjm13zo_SChUNm_jrj5eq5jNnj2vTJuiVFuApHyVFDe6OZolN/pub?output=xlsx"
 IST = pytz.timezone('Asia/Kolkata')
 
