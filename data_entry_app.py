@@ -12,10 +12,15 @@ APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyWmANSD06mgC05nEi4SZ
 LIVE_EXCEL_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ6PaPvxvRG_cUNa9NKfYEnujEShvxjjm13zo_SChUNm_jrj5eq5jNnj2vTJuiVFuApHyVFDe6OZolN/pub?output=xlsx"
 IST = pytz.timezone('Asia/Kolkata')
 
+# --- USERS DATABASE ---
+USERS = {
+    "operator": {"password": "op123", "role": "Operator"},
+    "admin": {"password": "superadmin2026", "role": "Super Admin"}
+}
+
 # --- CLEAN UI SETUP ---
 st.set_page_config(page_title="Rake Master Entry", layout="wide")
 
-# Only safe CSS to make disabled text visible and reduce huge top-white space
 st.markdown("""
     <style>
     .block-container { padding-top: 2rem; max-width: 98%; }
@@ -23,21 +28,66 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# --- SESSION STATE INITIALIZATION ---
+if 'logged_in' not in st.session_state: st.session_state.logged_in = False
+if 'role' not in st.session_state: st.session_state.role = None
+if 'username' not in st.session_state: st.session_state.username = None
+if 'outages_list' not in st.session_state: st.session_state.outages_list = [] 
+
+# ==========================================
+# 0. LOGIN SCREEN
+# ==========================================
+if not st.session_state.logged_in:
+    st.markdown("<h2 style='text-align: center; color: #003366;'>🔒 Rake Data Entry System</h2>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 1, 1])
+    with col2:
+        with st.form("login_form"):
+            st.markdown("**Please sign in to continue**")
+            username = st.text_input("Username").strip().lower()
+            password = st.text_input("Password", type="password")
+            submit_btn = st.form_submit_button("Login", use_container_width=True)
+            
+            if submit_btn:
+                if username in USERS and USERS[username]["password"] == password:
+                    st.session_state.logged_in = True
+                    st.session_state.role = USERS[username]["role"]
+                    st.session_state.username = username
+                    st.rerun()
+                else:
+                    st.error("❌ Invalid Username or Password")
+    st.stop() # Stops the rest of the code from running until logged in
+
+# --- SIDEBAR LOGOUT ---
+st.sidebar.markdown(f"👤 **User:** {st.session_state.username}")
+st.sidebar.markdown(f"🛡️ **Role:** {st.session_state.role}")
+if st.sidebar.button("🚪 Logout", use_container_width=True):
+    st.session_state.logged_in = False
+    st.session_state.role = None
+    st.session_state.username = None
+    st.session_state.outages_list = []
+    st.rerun()
+
 # --- TIME LOGIC ---
 now_ist = datetime.now(IST)
 today_ist = now_ist.date()
 yesterday_ist = today_ist - timedelta(days=1)
 cutoff_12_hrs = now_ist - timedelta(hours=12)
 
-if 'outages_list' not in st.session_state: 
-    st.session_state.outages_list = [] 
+# --- ROLE-BASED DATE LIMITS ---
+is_super_admin = (st.session_state.role == "Super Admin")
+# Super Admin can pick any past date. Operators are locked to Yesterday/Today.
+min_date_allowed = None if is_super_admin else yesterday_ist
 
-st.markdown("### 🚂 Rake Master Data Entry (IST)")
+st.markdown(f"### 🚂 Rake Master Data Entry (IST)")
 
 tab1, tab2, tab3 = st.tabs(["📝 New Entry Form", "📋 View Yesterday & Today", "📥 Download Reports"])
 
 with tab1:
-    st.info("ℹ️ To EDIT a previous rake, enter the exact RAKE No. (Edits and new entries restricted to past 12 hours).")
+    if is_super_admin:
+        st.success("🛡️ **Super Admin Mode Active:** 12-hour restriction disabled. You can enter or edit data for any past date.")
+    else:
+        st.info("ℹ️ To EDIT a previous rake, enter the exact RAKE No. (Edits and new entries restricted to past 12 hours).")
     
     # ==========================================
     # 1. BASIC DETAILS
@@ -53,20 +103,20 @@ with tab1:
     st.divider()
 
     # ==========================================
-    # 2. TIMELINE (MANDATORY, NO DEFAULTS)
+    # 2. TIMELINE (MANDATORY, ROLE-BASED MIN DATE)
     # ==========================================
     t1, t2, t3, t4 = st.columns(4)
     with t1:
-        d_rec = st.date_input("Receipt Date *", value=None, min_value=yesterday_ist, max_value=today_ist)
+        d_rec = st.date_input("Receipt Date *", value=None, min_value=min_date_allowed, max_value=today_ist)
         ti_rec = st.time_input("Receipt Time *", value=None, step=60)
     with t2:
-        d_pla = st.date_input("Placement Date *", value=None, min_value=yesterday_ist, max_value=today_ist)
+        d_pla = st.date_input("Placement Date *", value=None, min_value=min_date_allowed, max_value=today_ist)
         ti_pla = st.time_input("Placement Time *", value=None, step=60)
     with t3:
-        d_end = st.date_input("U/L End Date *", value=None, min_value=yesterday_ist, max_value=today_ist)
+        d_end = st.date_input("U/L End Date *", value=None, min_value=min_date_allowed, max_value=today_ist)
         ti_end = st.time_input("U/L End Time *", value=None, step=60)
     with t4:
-        d_rel = st.date_input("Release Date *", value=None, min_value=yesterday_ist, max_value=today_ist)
+        d_rel = st.date_input("Release Date *", value=None, min_value=min_date_allowed, max_value=today_ist)
         ti_rel = st.time_input("Release Time *", value=None, step=60)
 
     # ==========================================
@@ -163,8 +213,11 @@ with tab1:
     # 4. VALIDATION & SUBMISSION LOGIC
     # ==========================================
     def validate_12_hours(dt, label):
+        if is_super_admin:
+            return True # Super Admin bypasses this check completely
+            
         if dt < cutoff_12_hrs:
-            st.error(f"❌ {label} ({dt.strftime('%d.%m %H:%M')}) is older than 12 hours! Entry blocked.")
+            st.error(f"❌ {label} ({dt.strftime('%d.%m %H:%M')}) is older than 12 hours! Entry blocked. Contact Super Admin to edit.")
             return False
         if dt > now_ist:
             st.error(f"❌ {label} cannot be in the future!")
@@ -187,6 +240,7 @@ with tab1:
         dt_end = IST.localize(datetime.combine(d_end, ti_end))
         dt_rel = IST.localize(datetime.combine(d_rel, ti_rel))
 
+        # Run 12-hour rule (Auto-bypassed if Super Admin)
         if not (validate_12_hours(dt_rec, "Receipt Time") and validate_12_hours(dt_pla, "Placement Time") and 
                 validate_12_hours(dt_end, "Unloading End Time") and validate_12_hours(dt_rel, "Release Time")):
             st.stop()
