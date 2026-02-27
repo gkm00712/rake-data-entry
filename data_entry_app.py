@@ -5,6 +5,7 @@ import pytz
 import re
 import pandas as pd
 import io
+import math
 
 # --- CONFIGURATION ---
 APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyWmANSD06mgC05nEi4SZkdN4pxZp4V_c3TTWK0OsqM0mnWVAq7lqDJsnSSBaegt07r/exec"
@@ -17,6 +18,7 @@ st.markdown("""
     <style>
     .block-container { padding-top: 1rem; padding-bottom: 0rem; max-width: 98%; }
     div[data-testid="stVerticalBlock"] { gap: 0.2rem; }
+    input[disabled] { color: #1f77b4 !important; font-weight: bold; background-color: #f0f2f6; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -31,7 +33,6 @@ if 'outages_list' not in st.session_state:
 
 st.markdown("### 🚂 Rake Master Data Entry (IST)")
 
-# Add 3rd Tab for Downloading
 tab1, tab2, tab3 = st.tabs(["📝 New Entry Form", "📋 View Yesterday & Today", "📥 Download Reports"])
 
 with tab1:
@@ -40,19 +41,18 @@ with tab1:
     # ==========================================
     # 1. BASIC DETAILS
     # ==========================================
-    c1, c2, c3, c4, c5, c6 = st.columns([1, 1.5, 1.5, 1, 1, 1])
+    c1, c2, c3, c4, c5 = st.columns([1, 1.5, 1.5, 1, 1])
     with c1: sr_no = st.number_input("Sr.No", min_value=1, step=1)
     with c2: rake_no = st.text_input("RAKE No (XX/XXXX) *").strip().upper() 
     with c3: source = st.text_input("Coal Source/MINE *").strip().upper()   
     with c4: w_qty = st.number_input("Wagon Qty *", min_value=1, max_value=99, value=58)
     with c5: w_type = st.selectbox("Type", ["N", "R"])
-    with c6: demurrage = st.number_input("Demurrage(Hrs)", min_value=0.0, step=0.1)
     wagon_spec = f"{w_qty}{w_type}"
 
     st.divider()
 
     # ==========================================
-    # 2. TIMELINE
+    # 2. TIMELINE (MANDATORY, NO DEFAULTS)
     # ==========================================
     t1, t2, t3, t4 = st.columns(4)
     with t1:
@@ -67,6 +67,46 @@ with tab1:
     with t4:
         d_rel = st.date_input("Release Date *", value=None, min_value=yesterday_ist, max_value=today_ist)
         ti_rel = st.time_input("Release Time *", value=None, step=60)
+
+    # ==========================================
+    # 2.5 AUTO-CALCULATE DURATIONS & DEMURRAGE
+    # ==========================================
+    u_duration_str = "00:00:00"
+    r_duration_str = "00:00:00"
+    demurrage_val = 0
+
+    # Only calculate if all timeline fields are filled
+    if d_rec and ti_rec and d_pla and ti_pla and d_end and ti_end and d_rel and ti_rel:
+        dt_rec = IST.localize(datetime.combine(d_rec, ti_rec))
+        dt_pla = IST.localize(datetime.combine(d_pla, ti_pla))
+        dt_end = IST.localize(datetime.combine(d_end, ti_end))
+        dt_rel = IST.localize(datetime.combine(d_rel, ti_rel))
+
+        # Ensure timeline is chronological before calculating
+        if dt_rec <= dt_pla <= dt_end <= dt_rel:
+            u_td = dt_end - dt_pla
+            r_td = dt_rel - dt_rec
+            
+            # Format Durations to HH:MM:SS
+            u_sec = int(u_td.total_seconds())
+            r_sec = int(r_td.total_seconds())
+            u_duration_str = f"{u_sec//3600:02d}:{(u_sec%3600)//60:02d}:{u_sec%60:02d}"
+            r_duration_str = f"{r_sec//3600:02d}:{(r_sec%3600)//60:02d}:{r_sec%60:02d}"
+
+            # Demurrage Calculation Logic
+            r_hours = r_sec / 3600.0
+            free_time = 7.0 if w_type == "N" else 2.0
+            
+            if r_hours > free_time:
+                # math.ceil rounds up to the next higher numeral (e.g., 0.25 excess hours -> 1 hour demurrage)
+                demurrage_val = math.ceil(r_hours - free_time)
+
+    # Display Calculated Values (Disabled/Read-Only boxes)
+    st.markdown("**⏱️ Auto-Calculated Durations & Demurrage**")
+    cd1, cd2, cd3 = st.columns(3)
+    with cd1: st.text_input("Unloading Duration", value=u_duration_str, disabled=True)
+    with cd2: st.text_input("Release Duration", value=r_duration_str, disabled=True)
+    with cd3: st.text_input("Demurrage (Hrs) - Auto Calculated", value=str(demurrage_val), disabled=True)
 
     st.divider()
 
@@ -126,7 +166,7 @@ with tab1:
     st.divider()
 
     # ==========================================
-    # 4. SUBMISSION LOGIC
+    # 4. VALIDATION & SUBMISSION LOGIC
     # ==========================================
     def validate_12_hours(dt, label):
         if dt < cutoff_12_hrs:
@@ -184,13 +224,15 @@ with tab1:
                     st.stop()
 
         outage_summary = "\n".join([o["Log"] for o in st.session_state.outages_list])
+        
+        # Uses the Auto-Calculated Durations
         payload = {
             "sr_no": sr_no, "rake_no": rake_no, "source": source, "wagon_spec": wagon_spec,
             "receipt": f"{d_rec.strftime('%d.%m.%Y')}/{ti_rec.strftime('%H:%M')}",
             "placement": f"{d_pla.strftime('%d.%m.%Y')}/{ti_pla.strftime('%H:%M')}",
             "u_end": f"{d_end.strftime('%d.%m.%Y')}/{ti_end.strftime('%H:%M')}",
             "release": f"{d_rel.strftime('%d.%m.%Y')}/{ti_rel.strftime('%H:%M')}",
-            "u_duration": "CALC", "r_duration": "CALC", "demurrage": demurrage, 
+            "u_duration": u_duration_str, "r_duration": r_duration_str, "demurrage": demurrage_val, 
             "remarks": outage_summary, 
             "nth": nth, "muth": muth, 
             "wt1": tippler_data["WT-1"], "wt2": tippler_data["WT-2"], 
@@ -241,11 +283,8 @@ with tab3:
     if st.button("🔍 Search & Generate Excel File", type="primary"):
         with st.spinner(f"Fetching records for {selected_export_date.strftime('%d.%m.%Y')}..."):
             try:
-                # 1. Fetch raw data
                 r = requests.get(LIVE_EXCEL_URL)
                 df = pd.read_excel(io.BytesIO(r.content), engine='openpyxl').dropna(how='all')
-                
-                # 2. Filter by the selected date string
                 target_str = selected_export_date.strftime('%d.%m.%Y')
                 mask = df.astype(str).apply(lambda x: x.str.contains(target_str, na=False)).any(axis=1)
                 filtered_df = df[mask]
@@ -253,12 +292,9 @@ with tab3:
                 if filtered_df.empty:
                     st.warning(f"No records found for {target_str}. Please try another date.")
                 else:
-                    # 3. Create perfectly formatted Excel file in memory
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         filtered_df.to_excel(writer, index=False, sheet_name='Master Data')
-                        
-                        # Auto-adjust column widths for proper formatting
                         worksheet = writer.sheets['Master Data']
                         for col in worksheet.columns:
                             max_length = 0
@@ -268,7 +304,6 @@ with tab3:
                                     if len(str(cell.value)) > max_length:
                                         max_length = len(str(cell.value))
                                 except: pass
-                            # Set comfortable width, cap at 45 to prevent massive Remarks columns
                             worksheet.column_dimensions[column].width = min((max_length + 2), 45)
 
                     excel_data = output.getvalue()
