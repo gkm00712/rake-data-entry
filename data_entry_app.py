@@ -89,15 +89,27 @@ cutoff_12_hrs = now_ist - timedelta(hours=12)
 is_super_admin = (st.session_state.role == "Super Admin")
 min_date_allowed = None if is_super_admin else yesterday_ist
 
+# ==========================================
+# EXCEL DATA FETCHING (Cached for Speed)
+# ==========================================
+@st.cache_data(ttl=10)
+def get_all_excel_data():
+    try:
+        r = requests.get(LIVE_EXCEL_URL)
+        all_sheets = pd.read_excel(io.BytesIO(r.content), engine='openpyxl', sheet_name=None)
+        return pd.concat(all_sheets.values(), ignore_index=True).dropna(how='all')
+    except:
+        return pd.DataFrame()
+
 st.markdown(f"### 🚂 Rake Master Data Entry (IST)")
 
 tab1, tab2, tab3 = st.tabs(["📝 New Entry Form", "📋 View Records", "📥 Download Reports"])
 
 with tab1:
     if is_super_admin:
-        st.success("🛡️ **Super Admin Mode Active:** 12-hour restriction disabled. You can enter or edit data for any past date.")
+        st.success("🛡️ **Super Admin Mode Active:** 12-hour & Sequence restrictions disabled. You can enter or edit data for any past date.")
     else:
-        st.info("ℹ️ To EDIT a previous rake, enter the exact RAKE No. (Edits and new entries restricted to past 12 hours).")
+        st.info("ℹ️ To EDIT a previous rake, enter the exact RAKE No. New rakes must follow chronological order.")
     
     # ==========================================
     # 1. BASIC DETAILS
@@ -227,7 +239,6 @@ with tab1:
     # 4. VALIDATION & SUBMISSION LOGIC
     # ==========================================
     
-    # Helper function to figure out the date for a given HH:MM time
     def resolve_tippler_time(t_time, dt_min, dt_max):
         curr = dt_min.date()
         while curr <= dt_max.date():
@@ -239,7 +250,7 @@ with tab1:
 
     def validate_12_hours(dt, label):
         if is_super_admin:
-            return True # Super Admin bypasses this check completely
+            return True 
             
         if dt < cutoff_12_hrs:
             st.error(f"❌ {label} ({dt.strftime('%d.%m %H:%M')}) is older than 12 hours! Entry blocked. Contact Super Admin to edit.")
@@ -260,7 +271,35 @@ with tab1:
             st.error("❌ ALL 4 Timeline Dates and Times are MANDATORY.")
             st.stop()
 
-        # Run 12-hour rule (Auto-bypassed if Super Admin)
+        # Check Sequence & Uniqueness BEFORE running time validations
+        with st.spinner("Verifying Rake Sequence..."):
+            df_all = get_all_excel_data()
+            if not df_all.empty and 'RAKE No' in df_all.columns:
+                # Clean up existing rakes to strictly match formatting
+                existing_rakes = df_all['RAKE No'].astype(str).str.strip().str.upper().tolist()
+                existing_rakes = [r.lstrip("'") for r in existing_rakes if r.lower() != 'nan' and r != '']
+                
+                if rake_no not in existing_rakes:
+                    # If it's NOT an edit, enforce chronological sequence rule
+                    if len(existing_rakes) > 0:
+                        last_rake = existing_rakes[-1]
+                        
+                        if '/' in last_rake and '/' in rake_no:
+                            try:
+                                prev_a, prev_b = map(int, last_rake.split('/'))
+                                curr_a, curr_b = map(int, rake_no.split('/'))
+                                
+                                if not is_super_admin:
+                                    # Must increment both by 1 OR reset the first number to 1 (e.g. 1/150 at new month)
+                                    is_valid_sequence = (curr_a == prev_a + 1 or curr_a == 1) and (curr_b == prev_b + 1)
+                                    
+                                    if not is_valid_sequence:
+                                        st.error(f"❌ Sequence Error: Previous RAKE was **{last_rake}**. The next RAKE No must be **{prev_a+1}/{prev_b+1}** (or 1/{prev_b+1}).")
+                                        st.stop()
+                            except ValueError:
+                                pass # Ignore sequence check if the previous entry wasn't strictly numeric
+
+        # Run 12-hour rule 
         if not (validate_12_hours(dt_rec, "Receipt Time") and validate_12_hours(dt_pla, "Placement Time") and 
                 validate_12_hours(dt_end, "Unloading End Time") and validate_12_hours(dt_rel, "Release Time")):
             st.stop()
@@ -279,13 +318,11 @@ with tab1:
                     st.error(f"⚠️ Start and End times are MANDATORY for {name} because Wagon Count is {qty}.")
                     st.stop()
                 
-                # Verify Tippler Start Time is >= Receipt Time and <= U/L End Time
                 dt_tip_start = resolve_tippler_time(t_s, dt_rec, dt_end)
                 if not dt_tip_start:
                     st.error(f"❌ {name} Start Time ({t_s.strftime('%H:%M')}) cannot be before Receipt Time or after U/L End Time!")
                     st.stop()
                 
-                # Verify Tippler End Time is >= Tippler Start Time and <= U/L End Time
                 dt_tip_end = resolve_tippler_time(t_e, dt_tip_start, dt_end)
                 if not dt_tip_end:
                     st.error(f"❌ {name} End Time ({t_e.strftime('%H:%M')}) cannot be before its Start Time or after U/L End Time!")
@@ -323,14 +360,6 @@ with tab1:
 # ==========================================
 # 5 & 6. MULTI-SHEET READING LOGIC
 # ==========================================
-def get_all_excel_data():
-    try:
-        r = requests.get(LIVE_EXCEL_URL)
-        all_sheets = pd.read_excel(io.BytesIO(r.content), engine='openpyxl', sheet_name=None)
-        return pd.concat(all_sheets.values(), ignore_index=True).dropna(how='all')
-    except:
-        return pd.DataFrame()
-
 with tab2:
     st.subheader(f"📊 Today's Rake Entries ({today_ist.strftime('%d.%m.%Y')})")
     
@@ -367,8 +396,14 @@ with tab3:
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         filtered_df.to_excel(writer, index=False, sheet_name='Master Data')
                         for col in writer.sheets['Master Data'].columns:
-                            max_len = max([len(str(c.value)) for c in col] + [0])
-                            writer.sheets['Master Data'].column_dimensions[col[0].column_letter].width = min(max_len + 2, 45)
+                            max_length = 0
+                            column = col[0].column_letter
+                            for cell in col:
+                                try:
+                                    if len(str(cell.value)) > max_length:
+                                        max_length = len(str(cell.value))
+                                except: pass
+                            writer.sheets['Master Data'].column_dimensions[column].width = min(max_length + 2, 45)
                             
                     st.success(f"✅ Found {len(filtered_df)} records for {t_str}!")
                     st.download_button(
