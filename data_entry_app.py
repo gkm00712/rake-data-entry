@@ -7,7 +7,7 @@ import pandas as pd
 
 # --- CONFIGURATION ---
 APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzIWIysLhf_RPL1o5-NgqwIIM_OgA_hLey2WoschBClY5zku8fDtNLTjcYPkxn6-PJY/exec"
-LIVE_EXCEL_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ6PaPvxvRG_cUNa9NKfYEnujEShvxjjm13zo_SChUNm_jrj5eq5jNnj2vTJuiVFuApHyVFDe6OZolN/pub?output=xlsx"
+LIVE_EXCEL_URL = "https://script.google.com/macros/s/AKfycbweTWXYnXin1_HG1Tyt1sPjhusyUU3q13OY9NZ4fYoaxyFF-41MQZgHOnGsVRckNG53/exec"
 IST = pytz.timezone('Asia/Kolkata')
 
 st.set_page_config(page_title="Railway Rake Master Entry", layout="wide")
