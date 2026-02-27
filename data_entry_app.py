@@ -6,7 +6,7 @@ import re
 import pandas as pd
 
 # --- CONFIGURATION ---
-APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzIWIysLhf_RPL1o5-NgqwIIM_OgA_hLey2WoschBClY5zku8fDtNLTjcYPkxn6-PJY/exec"
+APPS_SCRIPT_URL = "https://script.google.com/u/0/home/projects/18jkUMdalX2dVBtaaUz8aw0YOaWcutZ-GiBHIiFGoj1IjVcOczZpm9A99/edit"
 LIVE_EXCEL_URL = "https://script.google.com/macros/s/AKfycbweTWXYnXin1_HG1Tyt1sPjhusyUU3q13OY9NZ4fYoaxyFF-41MQZgHOnGsVRckNG53/exec"
 IST = pytz.timezone('Asia/Kolkata')
 
