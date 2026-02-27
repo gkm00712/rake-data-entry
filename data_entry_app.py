@@ -6,7 +6,8 @@ import re
 import pandas as pd
 
 # --- CONFIGURATION ---
-APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzIWIysLhf_RPL1o5-NgqwIIM_OgA_hLey2WoschBClY5zku8fDtNLTjcYPkxn6-PJY/exec"
+# Your specific URLs are now hardcoded here
+APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzJ4WB-UlJkgxN7eC_ekpav-OJ1lY2pNloq0Fn8KahnHHzRoQSwbYjGYnt3kVAbKzbu/exec"
 LIVE_EXCEL_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ6PaPvxvRG_cUNa9NKfYEnujEShvxjjm13zo_SChUNm_jrj5eq5jNnj2vTJuiVFuApHyVFDe6OZolN/pub?output=xlsx"
 IST = pytz.timezone('Asia/Kolkata')
 
@@ -67,7 +68,6 @@ with tab1:
     # ==========================================
     st.subheader("🏗️ Tipper Details")
     
-    # NTH and MUTH placed compactly above Tipplers
     nm1, nm2, _ = st.columns([1, 1, 6])
     with nm1: nth = st.text_input("NTH Qty")
     with nm2: muth = st.text_input("MUTH Qty")
@@ -76,17 +76,14 @@ with tab1:
     tippler_data = {}
     tippler_names = ["WT-1", "WT-2", "WT-3", "WT-4"]
 
-    # Generate a tight UI grid for all 4 tipplers using a loop
     for i, name in enumerate(tippler_names):
         with w_cols[i]:
             st.markdown(f"**{name}**")
             t_qty = st.number_input("Wagon Count", min_value=0, key=f"q_{name}")
             c_start, c_end = st.columns(2)
-            # value=None forces the box to be blank until the user clicks the dropdown
             t_start = c_start.time_input("Start", value=None, key=f"s_{name}", step=60)
             t_end = c_end.time_input("End", value=None, key=f"e_{name}", step=60)
             
-            # Formatting logic: If qty > 0, assemble it into the "33 \n 07:10-11:40" format
             if t_qty > 0:
                 time_str = f"{t_start.strftime('%H:%M')}-{t_end.strftime('%H:%M')}" if (t_start and t_end) else ""
                 tippler_data[name] = f"{t_qty}\n{time_str}".strip()
@@ -117,22 +114,26 @@ with tab1:
         if add_outage and o_start:
             str_start = o_start.strftime('%H:%M')
             str_end = o_end.strftime('%H:%M') if o_end else "FULL DAY"
-            # Formats beautifully for Google Sheet Column L
             log_str = f"{dept} | {str_start} to {str_end} | Reason: {o_reason}"
             
             st.session_state.outages_list.append({
                 "Dept": dept, "Start": str_start, "End": str_end, "Reason": o_reason, "Log": log_str
             })
 
-    # Outages Table Display
+    # Outages Table Display with KeyError Crash Protection
     if st.session_state.outages_list:
         df_outages = pd.DataFrame(st.session_state.outages_list)
-        st.table(df_outages[["Dept", "Start", "End", "Reason"]])
+        try:
+            st.table(df_outages[["Dept", "Start", "End", "Reason"]])
+        except KeyError:
+            # If old memory conflicts with the updated column names, auto-clear to prevent app crash
+            st.session_state.outages_list.clear()
+            st.rerun()
+            
         if st.button("🗑️ Clear Outages"):
             st.session_state.outages_list.clear()
             st.rerun()
 
-    # General Remarks 
     remarks_text = st.text_area("General Remarks (Logistics, Bunching, etc.)")
 
     # ==========================================
@@ -144,7 +145,6 @@ with tab1:
             st.session_state.rake_val = ""
             st.rerun()
         else:
-            # Combine Table Outages + General Remarks for Column L
             outage_summary = "\n".join([o["Log"] for o in st.session_state.outages_list])
             final_remarks = f"{outage_summary}\n{remarks_text}".strip()
 
@@ -174,7 +174,7 @@ with tab1:
                     st.error(f"Connection failed: {e}")
 
 # ==========================================
-# RECENT ENTRIES VIEWER (LIVE FROM EXCEL LINK)
+# RECENT ENTRIES VIEWER
 # ==========================================
 with tab2:
     st.info(f"Viewing records restricted to Yesterday ({yesterday_ist.strftime('%d.%m.%Y')}) and Today ({today_ist.strftime('%d.%m.%Y')}) IST.")
