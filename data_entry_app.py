@@ -24,9 +24,8 @@ st.set_page_config(page_title="Rake Master Entry", layout="wide")
 st.markdown("""
     <style>
     .block-container { padding-top: 2rem; max-width: 98%; }
-    /* Dark Mode & Light Mode visible disabled inputs */
     input[disabled] { 
-        -webkit-text-fill-color: #0ea5e9 !important; /* Bright cyan pops in dark & light mode */
+        -webkit-text-fill-color: #0ea5e9 !important; 
         color: #0ea5e9 !important; 
         font-weight: 900 !important; 
         background-color: transparent !important; 
@@ -36,14 +35,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- SESSION STATE INITIALIZATION ---
-if 'logged_in' not in st.session_state: 
-    st.session_state.logged_in = False
-if 'role' not in st.session_state: 
-    st.session_state.role = None
-if 'username' not in st.session_state: 
-    st.session_state.username = None
-if 'outages_list' not in st.session_state: 
-    st.session_state.outages_list = [] 
+if 'logged_in' not in st.session_state: st.session_state.logged_in = False
+if 'role' not in st.session_state: st.session_state.role = None
+if 'username' not in st.session_state: st.session_state.username = None
+if 'outages_list' not in st.session_state: st.session_state.outages_list = [] 
 
 # ==========================================
 # 0. LOGIN SCREEN
@@ -67,7 +62,7 @@ if not st.session_state.logged_in:
                     st.rerun()
                 else:
                     st.error("❌ Invalid Username or Password")
-    st.stop() # Stops the rest of the code from running until logged in
+    st.stop() 
 
 # --- SIDEBAR LOGOUT ---
 st.sidebar.markdown(f"👤 **User:** {st.session_state.username}")
@@ -85,12 +80,11 @@ today_ist = now_ist.date()
 yesterday_ist = today_ist - timedelta(days=1)
 cutoff_12_hrs = now_ist - timedelta(hours=12)
 
-# --- ROLE-BASED DATE LIMITS ---
 is_super_admin = (st.session_state.role == "Super Admin")
 min_date_allowed = None if is_super_admin else yesterday_ist
 
 # ==========================================
-# EXCEL DATA FETCHING (Cached for Speed)
+# EXCEL DATA FETCHING & PARSING
 # ==========================================
 @st.cache_data(ttl=10)
 def get_all_excel_data():
@@ -101,70 +95,146 @@ def get_all_excel_data():
     except:
         return pd.DataFrame()
 
+def parse_excel_datetime(dt_str):
+    try:
+        if pd.isna(dt_str) or not str(dt_str).strip(): return None, None
+        d_part, t_part = str(dt_str).strip().split('/')
+        d = datetime.strptime(d_part.strip(), "%d.%m.%Y").date()
+        t = datetime.strptime(t_part.strip(), "%H:%M").time()
+        return d, t
+    except: return None, None
+
+def parse_excel_tippler(tip_str):
+    try:
+        if pd.isna(tip_str) or not str(tip_str).strip(): return 0, None, None
+        qty_part, time_part = str(tip_str).strip().split('\n')
+        qty = int(re.search(r'\d+', qty_part).group())
+        s_str, e_str = time_part.split('-')
+        s_time = datetime.strptime(s_str.strip(), "%H:%M").time()
+        e_time = datetime.strptime(e_str.strip(), "%H:%M").time()
+        return qty, s_time, e_time
+    except: return 0, None, None
+
 st.markdown(f"### 🚂 Rake Master Data Entry (IST)")
 
 tab1, tab2, tab3 = st.tabs(["📝 New Entry Form", "📋 View Records", "📥 Download Reports"])
 
 with tab1:
-    if is_super_admin:
-        st.success("🛡️ **Super Admin Mode Active:** 12-hour & Sequence restrictions disabled. You can enter or edit data for any past date.")
-    else:
-        st.info("ℹ️ To EDIT a previous rake, enter the exact RAKE No. New rakes must follow chronological order.")
-    
-    # --- AUTO-INCREMENT LOGIC ---
+    # --- MODE SELECTION ---
+    entry_mode = st.radio("Select Operation Mode:", ["➕ New Rake Entry", "✏️ Edit Existing Rake"], horizontal=True)
+    st.divider()
+
     df_all = get_all_excel_data()
+    
+    # --- DEFAULTS ---
     default_sr = 1
     default_rake = ""
+    default_source = ""
+    default_qty = 58
+    default_type_idx = 0
+    default_nth = ""
+    default_muth = ""
     
-    if not df_all.empty and 'RAKE No' in df_all.columns and 'Sr. No.' in df_all.columns:
-        last_row = df_all.iloc[-1] # Get the absolute last row entered
+    d_rec_def, t_rec_def = None, None
+    d_pla_def, t_pla_def = None, None
+    d_end_def, t_end_def = None, None
+    d_rel_def, t_rel_def = None, None
+
+    tip_defaults = {
+        "WT-1": (0, None, None), "WT-2": (0, None, None),
+        "WT-3": (0, None, None), "WT-4": (0, None, None)
+    }
+
+    # --- HYDRATION LOGIC ---
+    if entry_mode == "➕ New Rake Entry":
+        if is_super_admin: st.success("🛡️ **Super Admin Mode:** Restrictions disabled.")
+        else: st.info("ℹ️ New rakes must follow chronological sequence.")
         
-        # 1. Increment Serial Number
-        try:
-            default_sr = int(last_row['Sr. No.']) + 1
-        except:
-            default_sr = 1
+        if not df_all.empty and 'RAKE No' in df_all.columns:
+            last_row = df_all.iloc[-1]
+            try: default_sr = int(last_row['Sr. No.']) + 1
+            except: pass
             
-        # 2. Increment Rake Number
-        last_rake_val = str(last_row['RAKE No']).strip().lstrip("'")
-        if '/' in last_rake_val:
-            try:
-                prev_a, prev_b = map(int, last_rake_val.split('/'))
-                default_rake = f"{prev_a+1}/{prev_b+1}" # e.g. 1/123 -> 2/124
-            except:
-                default_rake = ""
+            last_rake_val = str(last_row['RAKE No']).strip().lstrip("'")
+            if '/' in last_rake_val:
+                try:
+                    prev_a, prev_b = map(int, last_rake_val.split('/'))
+                    default_rake = f"{prev_a+1}/{prev_b+1}"
+                except: pass
+
+    elif entry_mode == "✏️ Edit Existing Rake":
+        if df_all.empty or 'RAKE No' not in df_all.columns:
+            st.warning("No data found to edit.")
+            st.stop()
+            
+        existing_rakes = df_all['RAKE No'].astype(str).str.strip().str.lstrip("'").tolist()
+        existing_rakes = [r for r in existing_rakes if r.lower() != 'nan']
+        display_rakes = existing_rakes if is_super_admin else existing_rakes[-15:]
+        
+        if not display_rakes:
+            st.warning("No recent rakes found to edit.")
+            st.stop()
+            
+        selected_edit_rake = st.selectbox("Select Rake to Edit:", reversed(display_rakes))
+        
+        if selected_edit_rake:
+            row = df_all[df_all['RAKE No'].astype(str).str.contains(selected_edit_rake, regex=False)].iloc[-1]
+            
+            try: default_sr = int(row['Sr. No.'])
+            except: pass
+            
+            default_rake = selected_edit_rake
+            default_source = str(row['Coal Source/ MINE']) if pd.notna(row['Coal Source/ MINE']) else ""
+            default_nth = str(row['NTH']) if pd.notna(row['NTH']) else ""
+            default_muth = str(row['MUTH']) if pd.notna(row['MUTH']) else ""
+            
+            spec_str = str(row['(BOXN / BOBR)'])
+            if spec_str and spec_str.lower() != 'nan':
+                try: default_qty = int(''.join(filter(str.isdigit, spec_str)))
+                except: pass
+                if 'R' in spec_str.upper(): default_type_idx = 1
+
+            d_rec_def, t_rec_def = parse_excel_datetime(row['Receipt Time & Date'])
+            d_pla_def, t_pla_def = parse_excel_datetime(row['Placement Date & Time'])
+            d_end_def, t_end_def = parse_excel_datetime(row['Unloading End Date & Time'])
+            d_rel_def, t_rel_def = parse_excel_datetime(row['Rake Release Date & Time'])
+
+            tip_defaults["WT-1"] = parse_excel_tippler(row.get('WT-1', ''))
+            tip_defaults["WT-2"] = parse_excel_tippler(row.get('WT-2', ''))
+            tip_defaults["WT-3"] = parse_excel_tippler(row.get('WT-3', ''))
+            tip_defaults["WT-4"] = parse_excel_tippler(row.get('WT-4', ''))
+            
+            st.info("✅ Previous data loaded into the form. Make your changes below and click Submit to overwrite.")
     
     # ==========================================
     # 1. BASIC DETAILS
     # ==========================================
     c1, c2, c3, c4, c5 = st.columns([1, 1.5, 1.5, 1, 1])
-    
-    # Notice the "value=default_sr" and "value=default_rake" here
     with c1: sr_no = st.number_input("Sr.No", min_value=1, step=1, value=default_sr)
     with c2: rake_no = st.text_input("RAKE No (XX/XXXX) *", value=default_rake).strip().upper() 
-    with c3: source = st.text_input("Coal Source/MINE *").strip().upper()   
-    with c4: w_qty = st.number_input("Wagon Qty *", min_value=1, max_value=99, value=58)
-    with c5: w_type = st.selectbox("Type", ["N", "R"])
+    with c3: source = st.text_input("Coal Source/MINE *", value=default_source).strip().upper()   
+    with c4: w_qty = st.number_input("Wagon Qty *", min_value=1, max_value=99, value=default_qty)
+    with c5: w_type = st.selectbox("Type", ["N", "R"], index=default_type_idx)
     wagon_spec = f"{w_qty}{w_type}"
 
     st.divider()
 
     # ==========================================
-    # 2. TIMELINE (MANDATORY, ROLE-BASED MIN DATE)
+    # 2. TIMELINE
     # ==========================================
     t1, t2, t3, t4 = st.columns(4)
     with t1:
-        d_rec = st.date_input("Receipt Date *", value=None, min_value=min_date_allowed, max_value=today_ist)
-        ti_rec = st.time_input("Receipt Time *", value=None, step=60)
+        d_rec = st.date_input("Receipt Date *", value=d_rec_def, min_value=min_date_allowed, max_value=today_ist)
+        ti_rec = st.time_input("Receipt Time *", value=t_rec_def, step=60)
     with t2:
-        d_pla = st.date_input("Placement Date *", value=None, min_value=min_date_allowed, max_value=today_ist)
-        ti_pla = st.time_input("Placement Time *", value=None, step=60)
+        d_pla = st.date_input("Placement Date *", value=d_pla_def, min_value=min_date_allowed, max_value=today_ist)
+        ti_pla = st.time_input("Placement Time *", value=t_pla_def, step=60)
     with t3:
-        d_end = st.date_input("U/L End Date *", value=None, min_value=min_date_allowed, max_value=today_ist)
-        ti_end = st.time_input("U/L End Time *", value=None, step=60)
+        d_end = st.date_input("U/L End Date *", value=d_end_def, min_value=min_date_allowed, max_value=today_ist)
+        ti_end = st.time_input("U/L End Time *", value=t_end_def, step=60)
     with t4:
-        d_rel = st.date_input("Release Date *", value=None, min_value=min_date_allowed, max_value=today_ist)
-        ti_rel = st.time_input("Release Time *", value=None, step=60)
+        d_rel = st.date_input("Release Date *", value=d_rel_def, min_value=min_date_allowed, max_value=today_ist)
+        ti_rel = st.time_input("Release Time *", value=t_rel_def, step=60)
 
     # ==========================================
     # 2.5 AUTO-CALCULATE DURATIONS & DEMURRAGE
@@ -201,7 +271,7 @@ with tab1:
     cd1, cd2, cd3 = st.columns(3)
     with cd1: st.text_input("Unloading Duration", value=u_duration_str, disabled=True)
     with cd2: st.text_input("Release Duration", value=r_duration_str, disabled=True)
-    with cd3: st.text_input("Demurrage (Hrs) - Auto Calculated", value=str(demurrage_val), disabled=True)
+    with cd3: st.text_input("Demurrage (Hrs)", value=str(demurrage_val), disabled=True)
 
     st.divider()
 
@@ -213,8 +283,8 @@ with tab1:
     with col_tip:
         st.markdown("**🏗️ Tipper Details & NTH/MUTH**")
         nm1, nm2, _ = st.columns([1, 1, 2])
-        with nm1: nth = st.text_input("NTH Qty (Optional)").strip().upper()
-        with nm2: muth = st.text_input("MUTH Qty (Optional)").strip().upper()
+        with nm1: nth = st.text_input("NTH Qty", value=default_nth).strip().upper()
+        with nm2: muth = st.text_input("MUTH Qty", value=default_muth).strip().upper()
 
         w_cols = st.columns(4)
         tippler_data = {}
@@ -222,9 +292,11 @@ with tab1:
         for i, name in enumerate(["WT-1", "WT-2", "WT-3", "WT-4"]):
             with w_cols[i]:
                 st.markdown(f"**{name}**")
-                t_qty = st.number_input(f"Wagons", min_value=0, key=f"q_{name}")
-                t_start = st.time_input("Start Time", value=None, key=f"s_{name}", step=60)
-                t_end = st.time_input("End Time", value=None, key=f"e_{name}", step=60)
+                def_qty, def_s, def_e = tip_defaults[name]
+                
+                t_qty = st.number_input(f"Wagons", min_value=0, value=def_qty, key=f"q_{name}")
+                t_start = st.time_input("Start Time", value=def_s, key=f"s_{name}", step=60)
+                t_end = st.time_input("End Time", value=def_e, key=f"e_{name}", step=60)
                 
                 if t_qty > 0:
                     time_str = f"{t_start.strftime('%H:%M')}-{t_end.strftime('%H:%M')}" if (t_start and t_end) else ""
@@ -263,20 +335,16 @@ with tab1:
     # ==========================================
     # 4. VALIDATION & SUBMISSION LOGIC
     # ==========================================
-    
     def resolve_tippler_time(t_time, dt_min, dt_max):
         curr = dt_min.date()
         while curr <= dt_max.date():
             candidate = IST.localize(datetime.combine(curr, t_time))
-            if dt_min <= candidate <= dt_max:
-                return candidate
+            if dt_min <= candidate <= dt_max: return candidate
             curr += timedelta(days=1)
         return None
 
     def validate_12_hours(dt, label):
-        if is_super_admin:
-            return True 
-            
+        if is_super_admin: return True 
         if dt < cutoff_12_hrs:
             st.error(f"❌ {label} ({dt.strftime('%d.%m %H:%M')}) is older than 12 hours! Entry blocked. Contact Super Admin to edit.")
             return False
@@ -296,33 +364,27 @@ with tab1:
             st.error("❌ ALL 4 Timeline Dates and Times are MANDATORY.")
             st.stop()
 
-        # Check Sequence & Uniqueness BEFORE running time validations
-        with st.spinner("Verifying Rake Sequence..."):
-            if not df_all.empty and 'RAKE No' in df_all.columns:
-                existing_rakes = df_all['RAKE No'].astype(str).str.strip().str.upper().tolist()
-                existing_rakes = [r.lstrip("'") for r in existing_rakes if r.lower() != 'nan' and r != '']
-                
-                if rake_no not in existing_rakes:
-                    # If it's NOT an edit, enforce chronological sequence rule
-                    if len(existing_rakes) > 0:
+        # Sequence Check (Only for New Entries)
+        if entry_mode == "➕ New Rake Entry":
+            with st.spinner("Verifying Rake Sequence..."):
+                if not df_all.empty and 'RAKE No' in df_all.columns:
+                    existing_rakes = df_all['RAKE No'].astype(str).str.strip().str.upper().tolist()
+                    existing_rakes = [r.lstrip("'") for r in existing_rakes if r.lower() != 'nan' and r != '']
+                    
+                    if rake_no not in existing_rakes and len(existing_rakes) > 0:
                         last_rake = existing_rakes[-1]
-                        
                         if '/' in last_rake and '/' in rake_no:
                             try:
                                 prev_a, prev_b = map(int, last_rake.split('/'))
                                 curr_a, curr_b = map(int, rake_no.split('/'))
-                                
                                 if not is_super_admin:
-                                    # Must increment both by 1 OR reset the first number to 1
                                     is_valid_sequence = (curr_a == prev_a + 1 or curr_a == 1) and (curr_b == prev_b + 1)
-                                    
                                     if not is_valid_sequence:
                                         st.error(f"❌ Sequence Error: Previous RAKE was **{last_rake}**. The next RAKE No must be **{prev_a+1}/{prev_b+1}** (or 1/{prev_b+1}).")
                                         st.stop()
-                            except ValueError:
-                                pass # Ignore sequence check if the previous entry wasn't strictly numeric
+                            except ValueError: pass
 
-        # Run 12-hour rule 
+        # 12-hour rule 
         if not (validate_12_hours(dt_rec, "Receipt Time") and validate_12_hours(dt_pla, "Placement Time") and 
                 validate_12_hours(dt_end, "Unloading End Time") and validate_12_hours(dt_rel, "Release Time")):
             st.stop()
@@ -341,6 +403,7 @@ with tab1:
                     st.error(f"⚠️ Start and End times are MANDATORY for {name} because Wagon Count is {qty}.")
                     st.stop()
                 
+                # Check Tippler limits: Start >= Receipt, End <= U/L End
                 dt_tip_start = resolve_tippler_time(t_s, dt_rec, dt_end)
                 if not dt_tip_start:
                     st.error(f"❌ {name} Start Time ({t_s.strftime('%H:%M')}) cannot be before Receipt Time or after U/L End Time!")
@@ -353,6 +416,11 @@ with tab1:
 
         month_tab_name = d_rec.strftime('%b-%y').upper()
         outage_summary = "\n".join([o["Log"] for o in st.session_state.outages_list])
+        
+        # If edit mode, preserve old outages if new ones aren't added
+        if entry_mode == "✏️ Edit Existing Rake" and not st.session_state.outages_list:
+            row = df_all[df_all['RAKE No'].astype(str).str.contains(rake_no, regex=False)].iloc[-1]
+            outage_summary = str(row['REMARKS']) if pd.notna(row['REMARKS']) else ""
         
         payload = {
             "tab_name": month_tab_name,
@@ -383,7 +451,6 @@ with tab1:
 # ==========================================
 with tab2:
     st.subheader(f"📊 Today's Rake Entries ({today_ist.strftime('%d.%m.%Y')})")
-    
     if not df_all.empty:
         mask = df_all.astype(str).apply(lambda x: x.str.contains(today_ist.strftime('%d.%m.%Y'), na=False)).any(axis=1)
         today_data = df_all[mask].tail(10)
@@ -398,7 +465,6 @@ with tab2:
 with tab3:
     st.subheader("📥 Export Master Data by Date")
     st.markdown("Select a date below to instantly download that day's records in a formatted Excel file.")
-    
     selected_export_date = st.date_input("Select Date", value=today_ist, key="export_date")
     
     if st.button("🔍 Search & Generate Excel File", type="primary"):
