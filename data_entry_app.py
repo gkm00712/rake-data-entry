@@ -115,6 +115,50 @@ def parse_excel_tippler(tip_str):
         return qty, s_time, e_time
     except: return 0, None, None
 
+# --- NEW: BULLETPROOF AUTO-INCREMENT LOGIC ---
+def get_next_rake_details(df):
+    if df.empty or 'RAKE No' not in df.columns:
+        return 1, ""
+        
+    df_clean = df.copy()
+    # Clean up rake formatting and drop empties
+    df_clean['RAKE No'] = df_clean['RAKE No'].astype(str).str.strip().str.lstrip("'")
+    df_clean = df_clean[~df_clean['RAKE No'].isin(['nan', '', 'None'])]
+    
+    if df_clean.empty:
+        return 1, ""
+
+    # Sort strictly by Receipt Date so we always grab the true last Rake
+    if 'Receipt Time & Date' in df_clean.columns:
+        def safe_date_parse(dt_str):
+            try:
+                d_str, t_str = str(dt_str).split('/')
+                return datetime.strptime(f"{d_str.strip()} {t_str.strip()}", "%d.%m.%Y %H:%M")
+            except:
+                return datetime.min # Send bad rows to the top/bottom so they don't break sorting
+        
+        df_clean['Parsed_Date'] = df_clean['Receipt Time & Date'].apply(safe_date_parse)
+        df_clean = df_clean.sort_values(by='Parsed_Date', ascending=True)
+
+    last_row = df_clean.iloc[-1]
+    
+    # Safely get Sr No
+    try: 
+        next_sr = int(float(last_row.get('Sr. No.', 0))) + 1
+    except: 
+        next_sr = 1
+        
+    # Safely get Rake No
+    next_rake = ""
+    try:
+        parts = str(last_row['RAKE No']).split('/')
+        if len(parts) == 2:
+            next_rake = f"{int(parts[0])+1}/{int(parts[1])+1}"
+    except: 
+        pass
+        
+    return next_sr, next_rake
+
 st.markdown(f"### 🚂 Rake Master Data Entry (IST)")
 
 tab1, tab2, tab3 = st.tabs(["📝 New Entry Form", "📋 View Records", "📥 Download Reports"])
@@ -150,17 +194,8 @@ with tab1:
         if is_super_admin: st.success("🛡️ **Super Admin Mode:** Restrictions disabled.")
         else: st.info("ℹ️ New rakes must follow chronological sequence.")
         
-        if not df_all.empty and 'RAKE No' in df_all.columns:
-            last_row = df_all.iloc[-1]
-            try: default_sr = int(last_row['Sr. No.']) + 1
-            except: pass
-            
-            last_rake_val = str(last_row['RAKE No']).strip().lstrip("'")
-            if '/' in last_rake_val:
-                try:
-                    prev_a, prev_b = map(int, last_rake_val.split('/'))
-                    default_rake = f"{prev_a+1}/{prev_b+1}"
-                except: pass
+        # Call the new foolproof function here
+        default_sr, default_rake = get_next_rake_details(df_all)
 
     elif entry_mode == "✏️ Edit Existing Rake":
         if df_all.empty or 'RAKE No' not in df_all.columns:
@@ -368,16 +403,18 @@ with tab1:
         if entry_mode == "➕ New Rake Entry":
             with st.spinner("Verifying Rake Sequence..."):
                 if not df_all.empty and 'RAKE No' in df_all.columns:
+                    # Parse existing rakes properly
                     existing_rakes = df_all['RAKE No'].astype(str).str.strip().str.upper().tolist()
                     existing_rakes = [r.lstrip("'") for r in existing_rakes if r.lower() != 'nan' and r != '']
                     
                     if rake_no not in existing_rakes and len(existing_rakes) > 0:
-                        last_rake = existing_rakes[-1]
+                        last_rake = existing_rakes[-1] # The true last rake after date sorting
                         if '/' in last_rake and '/' in rake_no:
                             try:
                                 prev_a, prev_b = map(int, last_rake.split('/'))
                                 curr_a, curr_b = map(int, rake_no.split('/'))
                                 if not is_super_admin:
+                                    # Must perfectly increment or reset prefix to 1
                                     is_valid_sequence = (curr_a == prev_a + 1 or curr_a == 1) and (curr_b == prev_b + 1)
                                     if not is_valid_sequence:
                                         st.error(f"❌ Sequence Error: Previous RAKE was **{last_rake}**. The next RAKE No must be **{prev_a+1}/{prev_b+1}** (or 1/{prev_b+1}).")
@@ -403,7 +440,6 @@ with tab1:
                     st.error(f"⚠️ Start and End times are MANDATORY for {name} because Wagon Count is {qty}.")
                     st.stop()
                 
-                # Check Tippler limits: Start >= Receipt, End <= U/L End
                 dt_tip_start = resolve_tippler_time(t_s, dt_rec, dt_end)
                 if not dt_tip_start:
                     st.error(f"❌ {name} Start Time ({t_s.strftime('%H:%M')}) cannot be before Receipt Time or after U/L End Time!")
