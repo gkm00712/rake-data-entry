@@ -111,12 +111,37 @@ with tab1:
     else:
         st.info("ℹ️ To EDIT a previous rake, enter the exact RAKE No. New rakes must follow chronological order.")
     
+    # --- AUTO-INCREMENT LOGIC ---
+    df_all = get_all_excel_data()
+    default_sr = 1
+    default_rake = ""
+    
+    if not df_all.empty and 'RAKE No' in df_all.columns and 'Sr. No.' in df_all.columns:
+        last_row = df_all.iloc[-1] # Get the absolute last row entered
+        
+        # 1. Increment Serial Number
+        try:
+            default_sr = int(last_row['Sr. No.']) + 1
+        except:
+            default_sr = 1
+            
+        # 2. Increment Rake Number
+        last_rake_val = str(last_row['RAKE No']).strip().lstrip("'")
+        if '/' in last_rake_val:
+            try:
+                prev_a, prev_b = map(int, last_rake_val.split('/'))
+                default_rake = f"{prev_a+1}/{prev_b+1}" # e.g. 1/123 -> 2/124
+            except:
+                default_rake = ""
+    
     # ==========================================
     # 1. BASIC DETAILS
     # ==========================================
     c1, c2, c3, c4, c5 = st.columns([1, 1.5, 1.5, 1, 1])
-    with c1: sr_no = st.number_input("Sr.No", min_value=1, step=1)
-    with c2: rake_no = st.text_input("RAKE No (XX/XXXX) *").strip().upper() 
+    
+    # Notice the "value=default_sr" and "value=default_rake" here
+    with c1: sr_no = st.number_input("Sr.No", min_value=1, step=1, value=default_sr)
+    with c2: rake_no = st.text_input("RAKE No (XX/XXXX) *", value=default_rake).strip().upper() 
     with c3: source = st.text_input("Coal Source/MINE *").strip().upper()   
     with c4: w_qty = st.number_input("Wagon Qty *", min_value=1, max_value=99, value=58)
     with c5: w_type = st.selectbox("Type", ["N", "R"])
@@ -273,9 +298,7 @@ with tab1:
 
         # Check Sequence & Uniqueness BEFORE running time validations
         with st.spinner("Verifying Rake Sequence..."):
-            df_all = get_all_excel_data()
             if not df_all.empty and 'RAKE No' in df_all.columns:
-                # Clean up existing rakes to strictly match formatting
                 existing_rakes = df_all['RAKE No'].astype(str).str.strip().str.upper().tolist()
                 existing_rakes = [r.lstrip("'") for r in existing_rakes if r.lower() != 'nan' and r != '']
                 
@@ -290,7 +313,7 @@ with tab1:
                                 curr_a, curr_b = map(int, rake_no.split('/'))
                                 
                                 if not is_super_admin:
-                                    # Must increment both by 1 OR reset the first number to 1 (e.g. 1/150 at new month)
+                                    # Must increment both by 1 OR reset the first number to 1
                                     is_valid_sequence = (curr_a == prev_a + 1 or curr_a == 1) and (curr_b == prev_b + 1)
                                     
                                     if not is_valid_sequence:
@@ -328,9 +351,7 @@ with tab1:
                     st.error(f"❌ {name} End Time ({t_e.strftime('%H:%M')}) cannot be before its Start Time or after U/L End Time!")
                     st.stop()
 
-        # Generate month tab name e.g. "FEB-26"
         month_tab_name = d_rec.strftime('%b-%y').upper()
-
         outage_summary = "\n".join([o["Log"] for o in st.session_state.outages_list])
         
         payload = {
@@ -363,7 +384,6 @@ with tab1:
 with tab2:
     st.subheader(f"📊 Today's Rake Entries ({today_ist.strftime('%d.%m.%Y')})")
     
-    df_all = get_all_excel_data()
     if not df_all.empty:
         mask = df_all.astype(str).apply(lambda x: x.str.contains(today_ist.strftime('%d.%m.%Y'), na=False)).any(axis=1)
         today_data = df_all[mask].tail(10)
@@ -383,11 +403,10 @@ with tab3:
     
     if st.button("🔍 Search & Generate Excel File", type="primary"):
         with st.spinner(f"Fetching records..."):
-            df_export = get_all_excel_data()
-            if not df_export.empty:
+            if not df_all.empty:
                 t_str = selected_export_date.strftime('%d.%m.%Y')
-                mask = df_export.astype(str).apply(lambda x: x.str.contains(t_str, na=False)).any(axis=1)
-                filtered_df = df_export[mask]
+                mask = df_all.astype(str).apply(lambda x: x.str.contains(t_str, na=False)).any(axis=1)
+                filtered_df = df_all[mask]
                 
                 if filtered_df.empty:
                     st.warning(f"No records found for {t_str}. Please try another date.")
