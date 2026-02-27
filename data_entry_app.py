@@ -18,27 +18,38 @@ USERS = {
     "admin": {"password": "superadmin2026", "role": "Super Admin"}
 }
 
-# --- CLEAN UI SETUP ---
+# --- CLEAN UI & DARK MODE SETUP ---
 st.set_page_config(page_title="Rake Master Entry", layout="wide")
 
 st.markdown("""
     <style>
     .block-container { padding-top: 2rem; max-width: 98%; }
-    input[disabled] { color: #003366 !important; font-weight: bold; background-color: #f0f2f6; }
+    /* Dark Mode & Light Mode visible disabled inputs */
+    input[disabled] { 
+        -webkit-text-fill-color: #0ea5e9 !important; /* Bright cyan pops in dark & light mode */
+        color: #0ea5e9 !important; 
+        font-weight: 900 !important; 
+        background-color: transparent !important; 
+        border: 1px solid #0ea5e9 !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
 # --- SESSION STATE INITIALIZATION ---
-if 'logged_in' not in st.session_state: st.session_state.logged_in = False
-if 'role' not in st.session_state: st.session_state.role = None
-if 'username' not in st.session_state: st.session_state.username = None
-if 'outages_list' not in st.session_state: st.session_state.outages_list = [] 
+if 'logged_in' not in st.session_state: 
+    st.session_state.logged_in = False
+if 'role' not in st.session_state: 
+    st.session_state.role = None
+if 'username' not in st.session_state: 
+    st.session_state.username = None
+if 'outages_list' not in st.session_state: 
+    st.session_state.outages_list = [] 
 
 # ==========================================
 # 0. LOGIN SCREEN
 # ==========================================
 if not st.session_state.logged_in:
-    st.markdown("<h2 style='text-align: center; color: #003366;'>🔒 Rake Data Entry System</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center;'>🔒 Rake Data Entry System</h2>", unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
@@ -76,12 +87,11 @@ cutoff_12_hrs = now_ist - timedelta(hours=12)
 
 # --- ROLE-BASED DATE LIMITS ---
 is_super_admin = (st.session_state.role == "Super Admin")
-# Super Admin can pick any past date. Operators are locked to Yesterday/Today.
 min_date_allowed = None if is_super_admin else yesterday_ist
 
 st.markdown(f"### 🚂 Rake Master Data Entry (IST)")
 
-tab1, tab2, tab3 = st.tabs(["📝 New Entry Form", "📋 View Yesterday & Today", "📥 Download Reports"])
+tab1, tab2, tab3 = st.tabs(["📝 New Entry Form", "📋 View Records", "📥 Download Reports"])
 
 with tab1:
     if is_super_admin:
@@ -125,6 +135,10 @@ with tab1:
     u_duration_str = "00:00:00"
     r_duration_str = "00:00:00"
     demurrage_val = 0
+    dt_rec = None
+    dt_pla = None
+    dt_end = None
+    dt_rel = None
 
     if d_rec and ti_rec and d_pla and ti_pla and d_end and ti_end and d_rel and ti_rel:
         dt_rec = IST.localize(datetime.combine(d_rec, ti_rec))
@@ -212,6 +226,17 @@ with tab1:
     # ==========================================
     # 4. VALIDATION & SUBMISSION LOGIC
     # ==========================================
+    
+    # Helper function to figure out the date for a given HH:MM time
+    def resolve_tippler_time(t_time, dt_min, dt_max):
+        curr = dt_min.date()
+        while curr <= dt_max.date():
+            candidate = IST.localize(datetime.combine(curr, t_time))
+            if dt_min <= candidate <= dt_max:
+                return candidate
+            curr += timedelta(days=1)
+        return None
+
     def validate_12_hours(dt, label):
         if is_super_admin:
             return True # Super Admin bypasses this check completely
@@ -231,14 +256,9 @@ with tab1:
         if not re.match(r"^\d+/\d+$", rake_no):
             st.error("❌ RAKE No must be XX/XXXX.")
             st.stop()
-        if d_rec is None or ti_rec is None or d_pla is None or ti_pla is None or d_end is None or ti_end is None or d_rel is None or ti_rel is None:
+        if not dt_rec:
             st.error("❌ ALL 4 Timeline Dates and Times are MANDATORY.")
             st.stop()
-
-        dt_rec = IST.localize(datetime.combine(d_rec, ti_rec))
-        dt_pla = IST.localize(datetime.combine(d_pla, ti_pla))
-        dt_end = IST.localize(datetime.combine(d_end, ti_end))
-        dt_rel = IST.localize(datetime.combine(d_rel, ti_rel))
 
         # Run 12-hour rule (Auto-bypassed if Super Admin)
         if not (validate_12_hours(dt_rec, "Receipt Time") and validate_12_hours(dt_pla, "Placement Time") and 
@@ -259,21 +279,25 @@ with tab1:
                     st.error(f"⚠️ Start and End times are MANDATORY for {name} because Wagon Count is {qty}.")
                     st.stop()
                 
-                dt_tip_start = IST.localize(datetime.combine(d_pla, t_s))
-                if dt_tip_start < dt_pla: dt_tip_start += timedelta(days=1)
-                dt_tip_end = IST.localize(datetime.combine(d_pla, t_e))
-                if dt_tip_end < dt_tip_start: dt_tip_end += timedelta(days=1)
+                # Verify Tippler Start Time is >= Receipt Time and <= U/L End Time
+                dt_tip_start = resolve_tippler_time(t_s, dt_rec, dt_end)
+                if not dt_tip_start:
+                    st.error(f"❌ {name} Start Time ({t_s.strftime('%H:%M')}) cannot be before Receipt Time or after U/L End Time!")
+                    st.stop()
+                
+                # Verify Tippler End Time is >= Tippler Start Time and <= U/L End Time
+                dt_tip_end = resolve_tippler_time(t_e, dt_tip_start, dt_end)
+                if not dt_tip_end:
+                    st.error(f"❌ {name} End Time ({t_e.strftime('%H:%M')}) cannot be before its Start Time or after U/L End Time!")
+                    st.stop()
 
-                if dt_tip_start < dt_pla:
-                    st.error(f"❌ {name} Start Time ({t_s.strftime('%H:%M')}) cannot be before Placement Time!")
-                    st.stop()
-                if dt_tip_end > dt_rel:
-                    st.error(f"❌ {name} End Time ({t_e.strftime('%H:%M')}) cannot be after Rake Release Time!")
-                    st.stop()
+        # Generate month tab name e.g. "FEB-26"
+        month_tab_name = d_rec.strftime('%b-%y').upper()
 
         outage_summary = "\n".join([o["Log"] for o in st.session_state.outages_list])
         
         payload = {
+            "tab_name": month_tab_name,
             "sr_no": sr_no, "rake_no": rake_no, "source": source, "wagon_spec": wagon_spec,
             "receipt": f"{d_rec.strftime('%d.%m.%Y')}/{ti_rec.strftime('%H:%M')}",
             "placement": f"{d_pla.strftime('%d.%m.%Y')}/{ti_pla.strftime('%H:%M')}",
@@ -287,40 +311,41 @@ with tab1:
             "gcv": 0, "vm": 0
         }
         
-        with st.spinner("Writing securely to Google Sheets..."):
+        with st.spinner(f"Writing securely to {month_tab_name} tab in Google Sheets..."):
             try:
                 res = requests.post(APPS_SCRIPT_URL, json=payload)
                 if res.status_code == 200:
-                    st.success(f"✅ Rake {rake_no} processed successfully!")
+                    st.success(f"✅ Rake {rake_no} processed successfully to {month_tab_name}!")
                     st.session_state.outages_list.clear()
             except Exception as e:
                 st.error(f"Connection failed: {e}")
 
 # ==========================================
-# 5. RECENT ENTRIES VIEWER
+# 5 & 6. MULTI-SHEET READING LOGIC
 # ==========================================
+def get_all_excel_data():
+    try:
+        r = requests.get(LIVE_EXCEL_URL)
+        all_sheets = pd.read_excel(io.BytesIO(r.content), engine='openpyxl', sheet_name=None)
+        return pd.concat(all_sheets.values(), ignore_index=True).dropna(how='all')
+    except:
+        return pd.DataFrame()
+
 with tab2:
     st.subheader(f"📊 Today's Rake Entries ({today_ist.strftime('%d.%m.%Y')})")
-    @st.cache_data(ttl=10) 
-    def fetch_today_data():
-        try:
-            r = requests.get(LIVE_EXCEL_URL)
-            df = pd.read_excel(io.BytesIO(r.content), engine='openpyxl').dropna(how='all')
-            today_str = today_ist.strftime('%d.%m.%Y')
-            mask = df.astype(str).apply(lambda x: x.str.contains(today_str, na=False)).any(axis=1)
-            return df[mask].tail(10)
-        except Exception as e:
-            return pd.DataFrame()
-
-    today_data = fetch_today_data()
-    if not today_data.empty:
-        st.dataframe(today_data, use_container_width=True, hide_index=True)
+    
+    df_all = get_all_excel_data()
+    if not df_all.empty:
+        mask = df_all.astype(str).apply(lambda x: x.str.contains(today_ist.strftime('%d.%m.%Y'), na=False)).any(axis=1)
+        today_data = df_all[mask].tail(10)
+        
+        if not today_data.empty:
+            st.dataframe(today_data, use_container_width=True, hide_index=True)
+        else:
+            st.info("No entries logged for today yet.")
     else:
-        st.info("No entries logged for today yet.")
+        st.info("No Master Data found.")
 
-# ==========================================
-# 6. DOWNLOAD DATE-SPECIFIC EXCEL TAB
-# ==========================================
 with tab3:
     st.subheader("📥 Export Master Data by Date")
     st.markdown("Select a date below to instantly download that day's records in a formatted Excel file.")
@@ -328,40 +353,30 @@ with tab3:
     selected_export_date = st.date_input("Select Date", value=today_ist, key="export_date")
     
     if st.button("🔍 Search & Generate Excel File", type="primary"):
-        with st.spinner(f"Fetching records for {selected_export_date.strftime('%d.%m.%Y')}..."):
-            try:
-                r = requests.get(LIVE_EXCEL_URL)
-                df = pd.read_excel(io.BytesIO(r.content), engine='openpyxl').dropna(how='all')
-                target_str = selected_export_date.strftime('%d.%m.%Y')
-                mask = df.astype(str).apply(lambda x: x.str.contains(target_str, na=False)).any(axis=1)
-                filtered_df = df[mask]
+        with st.spinner(f"Fetching records..."):
+            df_export = get_all_excel_data()
+            if not df_export.empty:
+                t_str = selected_export_date.strftime('%d.%m.%Y')
+                mask = df_export.astype(str).apply(lambda x: x.str.contains(t_str, na=False)).any(axis=1)
+                filtered_df = df_export[mask]
                 
                 if filtered_df.empty:
-                    st.warning(f"No records found for {target_str}. Please try another date.")
+                    st.warning(f"No records found for {t_str}. Please try another date.")
                 else:
                     output = io.BytesIO()
                     with pd.ExcelWriter(output, engine='openpyxl') as writer:
                         filtered_df.to_excel(writer, index=False, sheet_name='Master Data')
-                        worksheet = writer.sheets['Master Data']
-                        for col in worksheet.columns:
-                            max_length = 0
-                            column = col[0].column_letter
-                            for cell in col:
-                                try:
-                                    if len(str(cell.value)) > max_length:
-                                        max_length = len(str(cell.value))
-                                except: pass
-                            worksheet.column_dimensions[column].width = min((max_length + 2), 45)
-
-                    excel_data = output.getvalue()
-                    
-                    st.success(f"✅ Found {len(filtered_df)} records for {target_str}!")
+                        for col in writer.sheets['Master Data'].columns:
+                            max_len = max([len(str(c.value)) for c in col] + [0])
+                            writer.sheets['Master Data'].column_dimensions[col[0].column_letter].width = min(max_len + 2, 45)
+                            
+                    st.success(f"✅ Found {len(filtered_df)} records for {t_str}!")
                     st.download_button(
-                        label=f"💾 Download {target_str} Excel Report",
-                        data=excel_data,
-                        file_name=f"Rake_Report_{selected_export_date.strftime('%Y%m%d')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        label=f"💾 Download {t_str} Excel Report", 
+                        data=output.getvalue(), 
+                        file_name=f"Rake_{selected_export_date.strftime('%Y%m%d')}.xlsx", 
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 
                         use_container_width=True
                     )
-            except Exception as e:
-                st.error(f"Failed to generate report: {e}")
+            else:
+                st.error("Failed to connect to Google Sheets.")
